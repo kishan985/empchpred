@@ -1,0 +1,494 @@
+---
+title: "Employee Churn"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+```{r}
+#loading the required libraries
+library(mlr)
+library(survival)
+library(pec)
+#library(survAUC)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(plyr)
+library(reshape2)
+library(plotly)
+library(corrplot)
+library(ggcorrplot)
+library(randomForestSRC)
+```
+
+step 1: Loading the data
+
+```{r}
+Employees=read.csv("turnover.csv")
+Employeess = Employees
+Employees
+```
+
+
+
+step 2: Data manipulation and Exploratory Data Analysis
+
+```{r}
+#removing null values
+Employees=na.omit(Employees)
+```
+
+```{r}
+# Summary statistics
+summary(Employees)
+```
+
+```{r}
+# Structure of the data
+str(Employees)
+```
+
+```{r}
+# converting the data type to int
+Employees$age <- as.integer(Employees$age)
+head(Employees)
+```
+```{r}
+attach(Employees)
+table(gender)
+table(event)
+table(industry)
+table(profession)
+table(greywage)
+table(way)
+detach(Employees)
+```
+Label encoding to change the categorical to numerical to feed into our model.
+
+```{r}
+# Gender: Male/Female
+Employees$gender=revalue(Employees$gender,c('m' = 0, 'f' = 1))
+Employees$gender=as.numeric((Employees$gender))
+
+# Industry: Describes what industry they belong to
+Employees$industry=revalue(Employees$industry,c('Retail'= 10, 'manufacture'= 14, 'IT'= 5, 'Banks'= 2, 'etc'= 13, 'Consult'= 4, 'State'= 11, 'Building'= 3, 'PowerGeneration'= 8, 'transport'= 15, 'Telecom'= 12, 'Mining'= 6, 'Pharma'= 7, 'Agriculture'= 1, 'RealEstate'= 9, ' HoReCa'= 0))
+Employees$industry=as.numeric((Employees$industry))
+
+# Profession: Describes their respective profession
+Employees$profession=revalue(Employees$profession,c('HR'=6, 'IT'= 7, 'Sales'= 11, 'etc'= 13, 'Marketing'= 9, 'BusinessDevelopment'= 1, 'Consult'= 3, 'Commercial'= 2, 'manage'= 14, 'Finance'= 5, 'Engineer'= 4, 'Teaching'= 12, 'Accounting'= 0, 'Law'= 8, 'PR'= 10))
+Employees$profession=as.numeric((Employees$profession))
+
+# Traffic: Describes what pipeline the employee came into the company
+Employees$traffic=revalue(Employees$traffic,c('youjs'= 7, 'empjs'= 2, 'rabrecNErab'= 4, 'friends'= 3, 'referal'= 6, 'KA'= 0, 'recNErab'= 5, 'advert'= 1))
+Employees$traffic=as.numeric((Employees$traffic))
+
+# Coach: Describes if they had a coach in their probation period
+Employees$coach=revalue(Employees$coach,c('no'= 1, 'my head'= 0, 'yes'= 2))
+Employees$coach=as.numeric((Employees$coach))
+
+# Head Gender: Gender of their coach during probation.
+Employees$head_gender=revalue(Employees$head_gender,c('m' = 0, 'f' = 1))
+Employees$head_gender=as.numeric((Employees$head_gender))
+
+# Grey wage: white - taxed, grey - not taxed 
+Employees$greywage=revalue(Employees$greywage,c('white'= 1, 'grey'= 0))
+Employees$greywage=as.numeric((Employees$greywage))
+
+# Way: Describes the way employee travels to office.
+Employees$way=revalue(Employees$way,c(
+'bus'= 0, 'car'= 1, 'foot'= 2))
+Employees$way=as.numeric((Employees$way))
+
+# Stag: Experience in months, now converted to years
+#Employees$stag = Employees$stag/12
+```
+
+```{r}
+head(Employees, 10)
+```
+```{r}
+Employees <- Employees %>%
+    rename(
+        supervisor = coach,
+        supervisor_gender = head_gender,
+        independence = independ,
+        innovator = novator
+        )
+
+head(Employees)
+```
+
+EAD
+
+```{r}
+# Correlation Plot
+var1=Employees[, !colnames(Employees) %in% "event"]
+var2=Employees$event
+cor_matrix=cor(Employees)
+reshaping=melt(cor_matrix)
+ggplot(reshaping, aes(x=Var1, y=Var2, fill=value)) +
+  geom_tile() +
+  scale_fill_gradient(low="white", high="blue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1,
+                                    size = 10, hjust = 1))
+#corrplot(Employees, method = 'color')
+# corr <- round(cor(Employees), 1)
+# ggcorrplot(corr, method = 'square')
+```
+
+```{r}
+#distribution of employees as per their experience in months 
+num_bins <- 16
+hist(Employees$stag, breaks = num_bins, main = "Histogram", xlab = "Experience in months", ylab = "Frequency",col = 'blue')
+```
+We could see there are more employees with experience less than 50 months.
+
+```{r}
+# Lets see the distribution of employee resigning or not
+
+# create a frequency table of the "fruit" column
+df <- table(unique(Employees$event))
+
+# plot the frequency table as a pie chart
+pie(df, labels = names(df), main = "Employee Distribution")
+```
+We could see the distribution is almost equal.
+
+```{r}
+# Create a box plot with customization
+df=data.frame(Employees$age)
+boxplot(df,
+  main = "Box Plot",    
+  xlab = "Data",        
+  ylab = "Values",      
+  col = "skyblue",      
+  border = "black",     
+  notchwidth = 0.5,     
+  horizontal = FALSE   
+)
+```
+```{r}
+# Filter data for quitting
+data_event0 <- subset(Employees, event == 0)
+
+# Filter data for not quitting
+data_event1 <- subset(Employees, event == 1)
+
+# Create box plots for event 0 and event 1
+par(mfrow = c(1, 2))  # Set up a 1x2 layout for side-by-side plots
+boxplot(age ~ event, data = data_event0, col = "skyblue", main = "box plot of employees who quit with age")
+boxplot(age ~ event, data = data_event1, col = "lightgreen", main = "box plot of employees who stay with age")
+```
+```{r}
+#seeing if age influence quitting 
+event_freq <- table(Employees$event,Employees$age)
+my_colors <- c("skyblue", "pink")
+# Create a bar plot
+barplot(event_freq, beside = TRUE, legend.text = c("Event 0", "Event 1"),
+        xlab = "Age", ylab = "Frequency", main = "Frequency of Events by Age",col = my_colors)
+```
+We can see that employees from age 27-30 years tend to quit more often.
+
+```{r}
+# Create a scatter plot with colors based on gender
+p5 <-plot_ly(data = Employees, x = ~Employees$age, y = ~Employees$stag, color = ~Employees$gender)
+p5
+```
+```{r}
+pca_fit <- prcomp(select(Employees, -c("event")), scale. = TRUE)
+pca_fit
+summary(pca_fit)
+```
+
+```{r}
+var_explained <- (pca_fit$sdev)^2 / sum(pca_fit$sdev^2)
+round(var_explained,3)
+cum_var <- cumsum(var_explained)
+ggplot(data = data.frame(PC = 1:15, var_explained, cum_var), aes(x = PC)) +
+  geom_line(aes(y = var_explained), color = "blue") +
+  geom_line(aes(y = cum_var), color = "red") +
+  xlab("Principal Component") +
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0, 1) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_bw()
+```
+PCA can be used to reduce the dimensionality of a dataset while retaining most 
+of its original variability. By projecting the original data onto a smaller 
+number of dimensions, PCA can help identify underlying patterns and relationships 
+between variables that may not be apparent in the original data. 
+
+Based on the plot, we can infer that the first principal component explains the 
+most variance (0.136), followed by the second component (0.115), the third 
+component (0.090), and so on.
+
+Using the elbow method we can infer that almost all the PCs would be required 
+to capture a significant amount of variance and hence wouldn't be of much use 
+in this data.
+
+```{r}
+library(ggbiplot)
+ggbiplot(pca_fit)
+```
+```{r}
+set.seed(2)
+cluster_max <- 10
+df_scale <- scale(Employees)
+wss <- sapply(1:cluster_max, function(k){kmeans(df_scale, k, nstart=10 )$tot.withinss})
+ggplot(data.frame(k=1:cluster_max, WSS=wss), aes(x=k, y=WSS)) +
+  geom_point(size=2) +
+  geom_line() +
+  labs(title="Elbow plot", x="No. of clusters", y="WSS")
+```
+```{r, warning=FALSE}
+library(cluster)
+gap_stat <- clusGap(df_scale, FUNcluster = kmeans, K.max = 10)
+plot(gap_stat)
+```
+```{r}
+library(factoextra)
+fviz_nbclust(df_scale,kmeans,method="silhouette")
+```
+Taking K=3 as 3 clusters.
+
+```{r}
+km_out <- kmeans(df_scale, 3)
+km_out
+
+ggbiplot(pca_fit,groups=km_out$cluster,scale=0)
+```
+```{r}
+fviz_cluster(km_out, data=df_scale)
+```
+Clustering is used to group similar observations together based on their 
+similarity.The clusters shows us different sub-groups in our data. 
+
+Based on the clusters, we can see this trend in our data:
+
+-Cluster 1 has a relatively higher proportion of female employees, and they are 
+relatively younger and have a lower wage. They also tend to have higher 
+extraversion and innovation scores, but lower self-control and anxiety scores. 
+Additionally, they are less likely to have a supervisor, and if they do, their 
+supervisor is more likely to be male. Employees in this cluster are more likely
+to quit compared to those in the other clusters.
+
+-Cluster 2 has a higher proportion of male employees and they are relatively 
+older with a higher wage. They tend to have higher self-control and anxiety 
+scores but lower extraversion and innovation scores. They are less likely to 
+have a female supervisor. Employees in this cluster are less likely to quit 
+compared to those in Cluster 1 but more likely to quit compared to those in 
+Cluster 3.
+
+-Cluster 3 has a relatively higher proportion of female employees, and they are 
+relatively older with a higher wage. They tend to have lower extraversion and 
+innovation scores but higher self-control and anxiety scores. They are more 
+likely to have a female supervisor. Employees in this cluster are less likely 
+to quit compared to those in the other clusters.
+
+
+```{r}
+X <- subset(Employeess, select = -event)
+y <- Employeess$event
+head(X)
+```
+```{r}
+#Kaplan-Meier survival curve
+
+library(survival)
+fit.surv <- survfit(Surv(stag, event) ~ 1, data=Employeess)
+summary(fit.surv)
+plot(fit.surv, xlab = "Months",
+    ylab = "Estimated Probability of Quitting")
+
+library(survminer)
+ggsurvplot(fit = fit.surv)
+```
+From the Kaplan-Meier curve above, we can say that with time the probability of 
+an employee decreases. We can see that it does not decrease rapidly over time.
+
+From the graph the median survival time of an employee seems to be around 50 
+months.
+
+```{r}
+#K-M curve stratified by gender
+fit.sex <- survfit(Surv(stag, event) ~ gender, data=Employeess)
+plot(fit.sex, xlab = "Months",
+    ylab = "Estimated Probability of Quitting", col = c(2,4))
+
+ggsurvplot(fit.sex,
+           conf.int =T,
+           xlab = "Months",
+    ylab = "Estimated Probability of Survival")
+
+#log-rank test to compare the survival of males to females, using the 
+#`survdiff()` function.
+logrank.test <- survdiff(Surv(stag, event) ~ gender, data=Employeess)
+logrank.test
+logrank.test$pvalue
+
+#Next, we fit  Cox proportional hazards models using the `coxph()`  function.
+fit.cox <- coxph(Surv(stag, event) ~ gender, data=Employeess)
+summary(fit.cox)
+
+#Regardless of which test we use, we see that there is no clear evidence for a 
+#difference in survival between males and females.
+```
+Above we plotted a K-M curve stratified by gender and we can infer from the 
+curve that there is not much difference between the probabilty of quitting 
+between males and females over time.
+
+Upon further performing a logrank test to compare survival rates of both genders,
+we can infer from the outcome that survival analysis of employee churn is not 
+affected by the gender of the employee.
+
+```{r}
+#K-M curve stratified by profession
+fit.pr <- survfit(Surv(stag, event) ~ profession, data=Employeess)
+plot(fit.pr, xlab = "Months",
+    ylab = "Estimated Probability of Quitting", col = c(2,4))
+
+ggsurvplot(fit.pr,
+           conf.int =T,
+           xlab = "Months",
+    ylab = "Estimated Probability of Survival")
+
+#log-rank test to compare the survival of different professions , using the `survdiff()` function.
+plogrank.test <- survdiff(Surv(stag, event) ~ profession, data=Employeess)
+plogrank.test
+plogrank.test$pvalue
+
+#Next, we fit  Cox proportional hazards models using the `coxph()`  function.
+pfit.cox <- coxph(Surv(stag, event) ~ profession, data=Employeess)
+summary(pfit.cox)
+```
+Above we plotted a K-M curve stratified by profession of the employee. We can 
+see from the curves that employees from different professions have different
+probability of quitting over time, where some are decreasing rapidly
+(like IT, Law), some are decreasing at a normal rate over time.
+
+The p-value (0.0087) observed from the log-rank test tells us that profession 
+does help in determining the survival rate of the employee as the p-value is way 
+below 0.05.
+
+On fitting the Cox-proportional hazard model, it will help identify the 
+variables that are significantly associated with the survival outcome. From the 
+summary of the model we can see the coefficients and the p-value of different 
+professions and infer that (the larger the coefficient and lower the p-value, 
+the variable has more impact on the final outcome). Hence we can say that,
+employees from management, marketing, consulting, engineering and teaching 
+have a higher risk of quitting compared to others.
+
+Here the above outcomes are not completely accurate, because above we saw the 
+number of people for each profession are not distributed equally as employees 
+from HR are considerably more than employees from other profession.
+
+```{r}
+#K-M curve stratified by industry
+fit.ind <- survfit(Surv(stag, event) ~ industry, data=Employeess)
+plot(fit.ind, xlab = "Months",
+    ylab = "Estimated Probability of Quitting", col = c(2,4))
+
+ggsurvplot(fit.ind,
+           conf.int =T,
+           xlab = "Months",
+    ylab = "Estimated Probability of Survival")
+
+#log-rank test to compare the survival various industries, using the `survdiff()` function.
+ilogrank.test <- survdiff(Surv(stag, event) ~ industry, data=Employeess)
+ilogrank.test
+ilogrank.test$pvalue
+
+#Next, we fit  Cox proportional hazards models using the `coxph()`  function.
+ifit.cox <- coxph(Surv(stag, event) ~ industry, data=Employeess)
+summary(ifit.cox)
+```
+Above we plotted a K-M curve stratified by industry of the employee. We can 
+see from the curves that employees from different industries have different 
+probability of quitting over time, where some are decreasing rapidly
+(Agriculture), some are decreasing at a normal rate over time and some 
+industries (Retail) remain constant after some time period.
+
+The p-value (1.740932e-07) observed from the log-rank test tells us that industry 
+does help in determining the survival rate of the employee as the p-value is way 
+below 0.05.
+
+On fitting the Cox-proportional hazard model, it will help identify the 
+variables that are significantly associated with the survival outcome. From the 
+summary of the model we can see the coefficients and the p-value of different 
+industries and infer that (the larger the coefficient and lower the p-value, 
+the variable has more impact on the final outcome). Hence we can say that,
+employees from Real Estate, Telecom and Retail industry do not have a higher 
+risk of quitting compared to other industries.
+
+```{r}
+#K-M curve stratified by way of transportation
+fit.way <- survfit(Surv(stag, event) ~ way, data=Employeess)
+plot(fit.way, xlab = "Months",
+    ylab = "Estimated Probability of Quitting", col = c(2,4))
+
+ggsurvplot(fit.way,
+           conf.int =T,
+           xlab = "Months",
+    ylab = "Estimated Probability of Survival")
+
+#log-rank test to compare the survival of males to females, using the `survdiff()` function.
+wlogrank.test <- survdiff(Surv(stag, event) ~ way, data=Employeess)
+wlogrank.test
+wlogrank.test$pvalue
+
+#Next, we fit  Cox proportional hazards models using the `coxph()`  function.
+wfit.cox <- coxph(Surv(stag, event) ~ way, data=Employeess)
+summary(wfit.cox)
+```
+Above we plotted a K-M curve stratified by way of transportation of the 
+employee. We can see from the curves that employees having different ways of 
+transportation do not have much difference in rate of survival probability 
+reduction.
+
+The p-value (0.003) observed from the log-rank test tells us that way of 
+transportation does help in determining the survival rate of the employee 
+as the p-value is below 0.05.
+
+```{r}
+#K-M curve stratified by employee wages.
+fit.wage <- survfit(Surv(stag, event) ~ greywage, data=Employeess)
+plot(fit.wage, xlab = "Months",
+    ylab = "Estimated Probability of Quitting", col = c(2,4))
+
+ggsurvplot(fit.wage,
+           conf.int =T,
+           xlab = "Months",
+    ylab = "Estimated Probability of Survival")
+
+#log-rank test to compare the survival employee wage, using the `survdiff()` function.
+wglogrank.test <- survdiff(Surv(stag, event) ~ greywage, data=Employeess)
+wglogrank.test
+wglogrank.test$pvalue
+```
+Above we plotted a K-M curve stratified by employee wage type. We can see from 
+the curves that employees having grey wage and white wage have different rate 
+of probability of survival reduction over time. We can see greywage employees
+quitting earlier than white wage employees.
+
+The p-value (2.27932e-06) observed from the log-rank test tells us that employee 
+wage does help in determining the survival rate of the employee 
+as the p-value is below 0.05.
+
+```{r}
+fit.all <- coxph(Surv(stag, event) ~ gender + profession + industry + way, data=Employeess)
+summary(fit.all)
+```
+
+Above code helps us in understanding and identifying the variables that are 
+significantly associated with the survival outcome.
+
+
+
+
+
+
+
+
